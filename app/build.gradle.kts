@@ -36,6 +36,14 @@ android {
     }
 }
 
+// Room escribe aquí el JSON del esquema de cada versión. Estos archivos se
+// versionan en git: son la única referencia con la que se pueden escribir y
+// probar migraciones, y sin ellos la única salida ante un cambio de esquema
+// vuelve a ser borrar los datos del usuario.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
