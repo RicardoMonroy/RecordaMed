@@ -43,6 +43,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * El canal de alarmas nace sin capacidad de atravesar No Molestar si al crearlo la
+     * app aún no tenía el acceso a la política de notificaciones, y sus propiedades ya
+     * no se pueden cambiar. Como el canal se crea en Application.onCreate() —siempre
+     * antes de que el usuario conceda nada—, hay que reevaluarlo al volver a la app:
+     * es lo que hace que el permiso recién concedido tenga efecto de inmediato en lugar
+     * de a la siguiente vez que se abra.
+     */
+    override fun onResume() {
+        super.onResume()
+        NotificationHelper.createAlarmNotificationChannel(this)
+    }
+
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)

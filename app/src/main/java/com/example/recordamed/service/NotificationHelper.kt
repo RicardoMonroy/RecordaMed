@@ -13,14 +13,23 @@ import com.example.recordamed.ui.screens.alarm.AlarmActivity
 
 object NotificationHelper {
 
-    // Las propiedades de un NotificationChannel (importancia, sonido, bypassDnd)
-    // quedan congeladas al crearlo: la app no puede modificarlas después, solo el
-    // usuario desde los ajustes del sistema. El canal original se creó cuando
-    // ACCESS_NOTIFICATION_POLICY aún no se declaraba, así que su setBypassDnd()
-    // quedó inerte de forma permanente. La única salida es publicar en un canal
-    // nuevo y borrar el viejo.
-    const val CHANNEL_ID_ALARM = "recordamed_alarm_channel_v2"
-    private const val CHANNEL_ID_ALARM_LEGACY = "recordamed_alarm_channel"
+    // Las propiedades de un NotificationChannel (importancia, sonido, bypassDnd) quedan
+    // congeladas al crearlo: la app no puede modificarlas después, solo el usuario desde
+    // los ajustes del sistema.
+    //
+    // Eso obliga a versionar el id, y por partida doble. Android también descarta en
+    // silencio `setBypassDnd(true)` si al crear el canal la app aún no tenía concedido
+    // el acceso a la política de notificaciones — y el canal se crea en
+    // Application.onCreate(), que en la primera ejecución corre siempre antes de que el
+    // usuario haya concedido nada. Un único id quedaría atrapado para siempre sin
+    // bypass, por mucho que el permiso llegue después.
+    //
+    // La salida es tener un id para cada estado y publicar en el que corresponda:
+    // al conceder el acceso se crea el canal capaz de atravesar No Molestar.
+    private const val CHANNEL_ID_BASIC = "recordamed_alarm_v3"
+    private const val CHANNEL_ID_DND = "recordamed_alarm_dnd_v3"
+    private val LEGACY_CHANNEL_IDS = listOf("recordamed_alarm_channel", "recordamed_alarm_channel_v2")
+
     private const val CHANNEL_NAME_ALARM = "Alarmas de Medicamentos"
     private const val CHANNEL_DESC_ALARM = "Notificaciones prioritarias para la toma de medicamentos"
 
@@ -28,8 +37,8 @@ object NotificationHelper {
      * ¿Puede la app saltarse No Molestar?
      *
      * `setBypassDnd(true)` solo surte efecto si el usuario concedió el acceso a la
-     * política de notificaciones. Sin él Android no falla ni avisa: simplemente
-     * ignora la bandera, y la alarma se queda muda de noche.
+     * política de notificaciones. Sin él Android no falla ni avisa: simplemente ignora la
+     * bandera, y la alarma se queda muda de noche.
      */
     fun hasDndAccess(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
@@ -37,31 +46,47 @@ object NotificationHelper {
         return nm?.isNotificationPolicyAccessGranted == true
     }
 
-    fun createAlarmNotificationChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.getSystemService(NotificationManager::class.java)
-                ?.deleteNotificationChannel(CHANNEL_ID_ALARM_LEGACY)
-            // El sonido y la vibración de la alarma los controla por completo
-            // AudioVoiceManager/AlarmActivity (para poder usar la voz grabada, el
-            // sonido elegido y una vibración suave). Si el canal de notificación
-            // también trae su propio sonido/vibración por defecto, ambos suenan a
-            // la vez — por eso aquí se dejan explícitamente apagados.
-            val channel = NotificationChannel(
-                CHANNEL_ID_ALARM,
-                CHANNEL_NAME_ALARM,
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = CHANNEL_DESC_ALARM
-                enableLights(true)
-                enableVibration(false)
-                setSound(null, null)
-                setBypassDnd(true) // Permite sonar sobre No Molestar
-                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
-            }
+    /** Canal en el que debe publicarse, según el permiso disponible ahora mismo. */
+    fun alarmChannelId(context: Context): String =
+        if (hasDndAccess(context)) CHANNEL_ID_DND else CHANNEL_ID_BASIC
 
-            val notificationManager = context.getSystemService(NotificationManager::class.java)
-            notificationManager?.createNotificationChannel(channel)
+    /**
+     * Crea el canal que corresponde al estado actual del permiso y retira el otro, para
+     * que el usuario no vea entradas duplicadas en los ajustes del sistema.
+     *
+     * Es idempotente y barata, así que conviene llamarla también al volver a la app: es
+     * lo que permite que el canal con bypass aparezca en cuanto se concede el acceso,
+     * sin esperar a reiniciar la aplicación.
+     */
+    fun createAlarmNotificationChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val notificationManager = context.getSystemService(NotificationManager::class.java) ?: return
+
+        LEGACY_CHANNEL_IDS.forEach { notificationManager.deleteNotificationChannel(it) }
+
+        val wantsDnd = hasDndAccess(context)
+        val activeId = if (wantsDnd) CHANNEL_ID_DND else CHANNEL_ID_BASIC
+        val obsoleteId = if (wantsDnd) CHANNEL_ID_BASIC else CHANNEL_ID_DND
+        notificationManager.deleteNotificationChannel(obsoleteId)
+
+        // El sonido y la vibración de la alarma los controla por completo
+        // AudioVoiceManager/AlarmActivity (para poder usar la voz grabada, el sonido
+        // elegido y una vibración suave). Si el canal también trajera los suyos por
+        // defecto, ambos sonarían a la vez — por eso aquí se apagan explícitamente.
+        val channel = NotificationChannel(
+            activeId,
+            CHANNEL_NAME_ALARM,
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = CHANNEL_DESC_ALARM
+            enableLights(true)
+            enableVibration(false)
+            setSound(null, null)
+            if (wantsDnd) setBypassDnd(true)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
         }
+
+        notificationManager.createNotificationChannel(channel)
     }
 
     fun buildAlarmNotification(
@@ -88,7 +113,7 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(context, CHANNEL_ID_ALARM)
+        return NotificationCompat.Builder(context, alarmChannelId(context))
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Hora de tomar: $medicationName")
             .setContentText("Dosis: $dosage. Toca para registrar tu toma.")
