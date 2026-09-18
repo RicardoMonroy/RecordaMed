@@ -9,6 +9,10 @@ interface MedicationDao {
     @Query("SELECT * FROM medications WHERE isActive = 1 ORDER BY name ASC")
     fun getActiveMedications(): Flow<List<MedicationEntity>>
 
+    /** Variante puntual para re-armar alarmas desde un receiver, donde no hay Flow. */
+    @Query("SELECT * FROM medications WHERE isActive = 1 ORDER BY name ASC")
+    suspend fun getActiveMedicationsSync(): List<MedicationEntity>
+
     @Query("SELECT * FROM medications WHERE id = :id LIMIT 1")
     suspend fun getMedicationById(id: Long): MedicationEntity?
 

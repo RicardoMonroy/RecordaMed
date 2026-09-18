@@ -157,10 +157,7 @@ class DetailViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             // Cancelar las alarmas armadas antes de borrar; si no, un medicamento
             // eliminado podría seguir sonando una última vez en su próximo horario.
-            val schedules = repository.getSchedulesForMedication(med.id)
-            schedules.forEach { schedule ->
-                alarmScheduler.cancelAlarmForHourMinute(med.id, schedule.timeHour, schedule.timeMinute)
-            }
+            alarmScheduler.cancelAllForMedication(repository, med.id)
             repository.deleteMedication(med)
             _uiState.update { it.copy(isDeleted = true) }
         }

@@ -244,10 +244,7 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
             // consulta): si no se hace, el horario viejo seguiría sonando además
             // del nuevo.
             if (state.isEditMode) {
-                val oldSchedules = repository.getSchedulesForMedication(state.medicationId)
-                oldSchedules.forEach { old ->
-                    alarmScheduler.cancelAlarmForHourMinute(state.medicationId, old.timeHour, old.timeMinute)
-                }
+                alarmScheduler.cancelAllForMedication(repository, state.medicationId)
             }
 
             val now = System.currentTimeMillis()
@@ -289,17 +286,11 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
             // coincidía con ninguna de las casillas guardadas — eso hacía que
             // el estado de "tomada/pendiente" de la tarjeta no cuadrara con la
             // alarma real que sonaba.
-            for ((hour, minute) in schedules) {
-                alarmScheduler.scheduleDoseAlarm(
-                    medicationId = medId,
-                    medicationName = medication.name,
-                    dosage = medication.dosage,
-                    hour = hour,
-                    minute = minute,
-                    voiceNotePath = medication.voiceNotePath,
-                    soundType = medication.soundType
-                )
-            }
+            //
+            // El re-armado vive ahora en AlarmScheduler y calcula cada instante
+            // con el mismo motor de dominio que usa el repositorio, de modo que
+            // el timestamp de la alarma y el de la tarjeta son el mismo valor.
+            alarmScheduler.rescheduleForMedication(repository, medId)
 
             _uiState.update { it.copy(isSaved = true) }
         }

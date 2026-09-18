@@ -11,7 +11,6 @@ import com.example.recordamed.ui.screens.alarm.AlarmActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.Calendar
 
 class AlarmReceiver : BroadcastReceiver() {
 
@@ -91,16 +90,11 @@ class AlarmReceiver : BroadcastReceiver() {
                             (!medication.isTemporary || medication.endDate == null || now < medication.endDate)
 
                     if (stillValid) {
-                        val cal = Calendar.getInstance().apply { timeInMillis = scheduledTime }
-                        app.alarmScheduler.scheduleDoseAlarm(
-                            medicationId = medicationId,
-                            medicationName = medicationName,
-                            dosage = dosage,
-                            hour = cal.get(Calendar.HOUR_OF_DAY),
-                            minute = cal.get(Calendar.MINUTE),
-                            voiceNotePath = voicePath,
-                            soundType = soundType
-                        )
+                        // Re-arma todos los horarios de este medicamento desde el motor
+                        // de dominio, en vez de reconstruir a mano la hora del disparo
+                        // actual: así el instante coincide con el que calcula el
+                        // repositorio y cancelar la alarma sí la encuentra.
+                        app.alarmScheduler.rescheduleForMedication(app.repository, medicationId, now)
                     }
                 } finally {
                     pendingResult.finish()

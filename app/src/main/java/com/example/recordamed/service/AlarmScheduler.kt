@@ -7,11 +7,14 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import com.example.recordamed.data.local.entities.DoseLogEntity
+import com.example.recordamed.data.repository.MedicationRepository
+import com.example.recordamed.domain.schedule.DoseOccurrenceCalculator
 import com.example.recordamed.receiver.AlarmReceiver
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.util.Calendar
+
+private const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
 
 class AlarmScheduler(private val context: Context) {
 
@@ -41,36 +44,61 @@ class AlarmScheduler(private val context: Context) {
             true
         }
 
-    fun scheduleDoseAlarm(
+    /**
+     * Re-arma todas las alarmas de un medicamento a partir de sus horarios guardados.
+     *
+     * Sustituye al antiguo `scheduleDoseAlarm(hour, minute)`, que calculaba por su
+     * cuenta "hoy o mañana a esa hora" y producía timestamps que no coincidían con los
+     * del repositorio. Ahora el instante sale de [DoseOccurrenceCalculator], el mismo
+     * que usa el resto de la app, de modo que cancelar una alarma sí la encuentra.
+     *
+     * Es idempotente: los `PendingIntent` se crean con `FLAG_UPDATE_CURRENT`, así que
+     * volver a llamarla reemplaza las alarmas existentes en lugar de duplicarlas.
+     */
+    suspend fun rescheduleForMedication(
+        repository: MedicationRepository,
         medicationId: Long,
-        medicationName: String,
-        dosage: String,
-        hour: Int,
-        minute: Int,
-        voiceNotePath: String?,
-        soundType: String = BuiltInSoundManager.SOUND_BELLS
+        now: Long = System.currentTimeMillis(),
     ) {
-        val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+        val medication = repository.getMedicationById(medicationId) ?: return
+        if (!medication.isActive) return
+        if (medication.isTemporary && medication.endDate != null && now >= medication.endDate) return
 
-            // Si la hora ya pasó hoy, programar para mañana
-            if (timeInMillis <= System.currentTimeMillis()) {
-                add(Calendar.DAY_OF_YEAR, 1)
-            }
+        val schedules = repository.getSchedulesForMedicationInSequenceOrder(medicationId)
+        val anchor = schedules.firstOrNull() ?: return
+        val anchorMinute = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute)
+
+        for (schedule in schedules) {
+            val triggerTime = DoseOccurrenceCalculator.nextOccurrenceAfter(
+                slotMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(schedule.timeHour, schedule.timeMinute),
+                anchorMinuteOfDay = anchorMinute,
+                medicationStartDate = medication.startDate,
+                now = now,
+            )
+            scheduleAlarmAtTime(
+                medicationId = medication.id,
+                medicationName = medication.name,
+                dosage = medication.dosage,
+                triggerTime = triggerTime,
+                voiceNotePath = medication.voiceNotePath,
+                soundType = medication.soundType,
+            )
         }
+    }
 
-        val triggerTime = calendar.timeInMillis
-        scheduleAlarmAtTime(
-            medicationId = medicationId,
-            medicationName = medicationName,
-            dosage = dosage,
-            triggerTime = triggerTime,
-            voiceNotePath = voiceNotePath,
-            soundType = soundType
-        )
+    /**
+     * Re-arma las alarmas de todos los medicamentos activos.
+     *
+     * `BootReceiver` y `AlarmReceiver` tenían cada uno su propio bucle de re-armado, casi
+     * iguales pero no idénticos. Ambos pasan ahora por aquí.
+     */
+    suspend fun rescheduleAll(
+        repository: MedicationRepository,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        for (medication in repository.getActiveMedicationsSync()) {
+            rescheduleForMedication(repository, medication.id, now)
+        }
     }
 
     fun scheduleAlarmAtTime(
@@ -166,27 +194,43 @@ class AlarmScheduler(private val context: Context) {
     }
 
     /**
-     * Cancela la alarma armada para un horario diario (hora:minuto) de un medicamento,
-     * sin necesidad de conocer el timestamp exacto con el que se programó originalmente.
+     * Cancela todas las alarmas armadas para un medicamento.
      *
-     * Como [scheduleDoseAlarm] siempre arma "la próxima ocurrencia" de esa hora —hoy si
-     * aún no pasa, o mañana si ya pasó—, la alarma actualmente activa solo puede
-     * corresponder a una de esas dos fechas. Se cancelan ambas por seguridad; cancelar
-     * un PendingIntent que no existe no tiene efecto (usa FLAG_NO_CREATE).
+     * Reemplaza al antiguo `cancelAlarmForHourMinute`, que adivinaba el timestamp
+     * probando "hoy a esa hora" y "mañana a esa hora". Esa suposición dejó de ser
+     * cierta al pasar el armado por [DoseOccurrenceCalculator]: el instante real se
+     * ancla a la primera toma del medicamento y puede no caer en ninguna de esas dos
+     * fechas, con lo que la cancelación no encontraba nada y quedaban alarmas fantasma.
      *
-     * Se usa al editar un medicamento (el horario cambió, p.ej. tras una visita al
-     * médico) o al eliminarlo, para no dejar recordatorios "fantasma" de horarios viejos.
+     * Solo hay dos candidatos posibles, y el calculador garantiza que sean esos: la
+     * ocurrencia vigente del ciclo actual y la del siguiente. Se cancelan ambas;
+     * cancelar un `PendingIntent` inexistente no tiene efecto (usa `FLAG_NO_CREATE`).
+     *
+     * Debe llamarse **antes** de guardar los cambios, para que los horarios y la fecha
+     * de alta leídos aquí sigan siendo los que se usaron al armar las alarmas.
+     *
+     * Se usa al editar un medicamento (cambió el horario tras una visita al médico) y
+     * al eliminarlo.
      */
-    fun cancelAlarmForHourMinute(medicationId: Long, hour: Int, minute: Int) {
-        val today = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        cancelAlarm(medicationId, today.timeInMillis)
+    suspend fun cancelAllForMedication(
+        repository: MedicationRepository,
+        medicationId: Long,
+        now: Long = System.currentTimeMillis(),
+    ) {
+        val medication = repository.getMedicationById(medicationId) ?: return
+        val schedules = repository.getSchedulesForMedicationInSequenceOrder(medicationId)
+        val anchor = schedules.firstOrNull() ?: return
+        val anchorMinute = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute)
 
-        val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-        cancelAlarm(medicationId, tomorrow.timeInMillis)
+        for (schedule in schedules) {
+            val current = DoseOccurrenceCalculator.currentOccurrence(
+                slotMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(schedule.timeHour, schedule.timeMinute),
+                anchorMinuteOfDay = anchorMinute,
+                medicationStartDate = medication.startDate,
+                now = now,
+            )
+            cancelAlarm(medicationId, current)
+            cancelAlarm(medicationId, current + ONE_DAY_MILLIS)
+        }
     }
 }

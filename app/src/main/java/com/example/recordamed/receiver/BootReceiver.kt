@@ -18,22 +18,10 @@ class BootReceiver : BroadcastReceiver() {
             val repository = app.repository
             val scheduler = app.alarmScheduler
 
+            // Un solo punto de re-armado, compartido con AlarmReceiver: antes cada
+            // receiver tenía su propio bucle y no calculaban el instante igual.
             CoroutineScope(Dispatchers.IO).launch {
-                val schedules = app.database.doseScheduleDao().getAllSchedulesSync()
-                for (schedule in schedules) {
-                    val med = repository.getMedicationById(schedule.medicationId)
-                    if (med != null && med.isActive) {
-                        scheduler.scheduleDoseAlarm(
-                            medicationId = med.id,
-                            medicationName = med.name,
-                            dosage = med.dosage,
-                            hour = schedule.timeHour,
-                            minute = schedule.timeMinute,
-                            voiceNotePath = med.voiceNotePath,
-                            soundType = med.soundType
-                        )
-                    }
-                }
+                scheduler.rescheduleAll(repository)
             }
         }
     }

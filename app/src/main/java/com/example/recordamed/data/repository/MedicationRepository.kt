@@ -7,6 +7,7 @@ import com.example.recordamed.data.local.entities.DoseLogEntity
 import com.example.recordamed.data.local.entities.DoseScheduleEntity
 import com.example.recordamed.data.local.entities.MedicationEntity
 import com.example.recordamed.domain.model.DayAdherence
+import com.example.recordamed.domain.schedule.DoseOccurrenceCalculator
 import com.example.recordamed.domain.model.TodayDoseItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -18,46 +19,23 @@ private const val ONE_DAY_MILLIS = 24 * 60 * 60 * 1000L
 private const val ONE_MINUTE_MILLIS = 60 * 1000L
 
 /**
- * Calcula el timestamp real y vigente de una toma, anclado siempre a la
- * PRIMERA toma real del medicamento (sequenceIndex == 0), nunca a una
- * comparación directa de hora:minuto contra "hoy". Esto evita cualquier
- * ambigüedad cuando un horario frecuente cruza la medianoche: en vez de
- * preguntar "¿esta hora:minuto ya pasó hoy?" (que puede confundir una toma
- * de esta noche con una de esta mañana, mucho antes de crearse el
- * medicamento), se calcula su distancia real en minutos desde la primera
- * toma, y esa distancia se aplica sobre el ciclo de 24 horas vigente.
+ * Timestamp vigente de una toma, delegado en [DoseOccurrenceCalculator].
+ *
+ * El cálculo vivía aquí como función privada y `AlarmScheduler` tenía su propia
+ * versión distinta, lo que hacía que armar y cancelar una alarma usaran timestamps
+ * diferentes. Ahora ambos pasan por el mismo motor de dominio, que sí tiene pruebas.
  */
 private fun resolveCurrentOccurrence(
     schedule: DoseScheduleEntity,
     anchor: DoseScheduleEntity,
     medicationStartDate: Long,
     now: Long
-): Long {
-    val anchorMinutes = anchor.timeHour * 60 + anchor.timeMinute
-    val slotMinutes = schedule.timeHour * 60 + schedule.timeMinute
-    val offsetMinutes = (((slotMinutes - anchorMinutes) % 1440) + 1440) % 1440
-
-    // T0: la primera toma, el mismo día calendario en que se creó el
-    // medicamento, a la hora elegida — sin importar si esa hora ya había
-    // pasado en el momento exacto de guardar. No hace falta empujarla al día
-    // siguiente en ese caso: si guardas a las 8:16 p.m. con horario desde
-    // las 6:00 p.m., la toma de las 6 ya pasó (se marcará atrasada/no
-    // tomada, correctamente) pero las siguientes de HOY (10 p.m., etc.)
-    // deben seguir viéndose hoy, no saltar directo a mañana a las 6.
-    val t0 = Calendar.getInstance().apply {
-        timeInMillis = medicationStartDate
-        set(Calendar.HOUR_OF_DAY, anchor.timeHour)
-        set(Calendar.MINUTE, anchor.timeMinute)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis
-
-    // ¿En qué ciclo de 24h (relativo a T0) cae "ahora"?
-    val cyclesElapsed = if (now < t0) 0 else (now - t0) / ONE_DAY_MILLIS
-    val cycleStart = t0 + cyclesElapsed * ONE_DAY_MILLIS
-
-    return cycleStart + offsetMinutes * ONE_MINUTE_MILLIS
-}
+): Long = DoseOccurrenceCalculator.currentOccurrence(
+    slotMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(schedule.timeHour, schedule.timeMinute),
+    anchorMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute),
+    medicationStartDate = medicationStartDate,
+    now = now,
+)
 
 class MedicationRepository(
     private val medicationDao: MedicationDao,
@@ -66,6 +44,9 @@ class MedicationRepository(
 ) {
 
     fun getActiveMedications(): Flow<List<MedicationEntity>> = medicationDao.getActiveMedications()
+
+    suspend fun getActiveMedicationsSync(): List<MedicationEntity> =
+        medicationDao.getActiveMedicationsSync()
 
     suspend fun getMedicationById(id: Long): MedicationEntity? = medicationDao.getMedicationById(id)
 
