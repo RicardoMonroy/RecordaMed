@@ -24,10 +24,17 @@ class AlarmReceiver : BroadcastReceiver() {
         val soundType = intent.getStringExtra(EXTRA_SOUND_TYPE) ?: "BELLS"
         val isSnoozeRetry = intent.getBooleanExtra(EXTRA_IS_SNOOZE_RETRY, false)
 
-        // Adquirir un WakeLock temporal para encender la CPU
+        // Adquirir un WakeLock temporal para mantener la CPU despierta mientras
+        // se arma la notificación y la alarma. No enciende la pantalla: de eso
+        // se encargan el full-screen intent y el `turnScreenOn` de AlarmActivity.
+        //
+        // Aquí iba además `ACQUIRE_CAUSES_WAKEUP`, que solo surte efecto con los
+        // niveles de WakeLock que encienden pantalla y por tanto no hacía nada
+        // combinado con PARTIAL_WAKE_LOCK. Se midió en dispositivo: ni en API 30
+        // ni en API 37 el encendido de pantalla provino de este WakeLock.
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            PowerManager.PARTIAL_WAKE_LOCK,
             "RecordaMed:AlarmWakeLock"
         )
         wakeLock.acquire(30 * 1000L) // 30 segundos
