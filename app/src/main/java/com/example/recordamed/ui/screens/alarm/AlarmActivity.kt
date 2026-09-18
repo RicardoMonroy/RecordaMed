@@ -1,13 +1,9 @@
 package com.example.recordamed.ui.screens.alarm
 
 import android.animation.ValueAnimator
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -33,17 +29,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.example.recordamed.MainActivity
 import com.example.recordamed.RecordaMedApp
+import com.example.recordamed.service.AlarmSoundService
 import com.example.recordamed.data.local.entities.DoseLogEntity
-import com.example.recordamed.service.AudioVoiceManager
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class AlarmActivity : ComponentActivity() {
 
-    private lateinit var audioVoiceManager: AudioVoiceManager
-    private var vibrator: Vibrator? = null
-    private var autoMissJob: Job? = null
 
     private var medicationId: Long = -1L
     private var medicationName: String = "Medicamento"
@@ -70,21 +61,12 @@ class AlarmActivity : ComponentActivity() {
         // pospuesta, no se ofrece la opción de nuevo.
         isSnoozeRetry = intent.getBooleanExtra(EXTRA_IS_SNOOZE_RETRY, false)
 
-        // 3. Audio y Vibración
-        audioVoiceManager = AudioVoiceManager(this)
-        audioVoiceManager.playAlarmSound(voicePath, soundType, onLoop = true)
-        startGentleVibration()
+        // 3. El sonido, la vibración y el temporizador de gracia los lleva
+        // AlarmSoundService. Vivían aquí, y eso hacía que la alarma entera dependiera
+        // de que esta actividad llegara a abrirse — cosa que no siempre ocurre.
 
         // 4. Encendido progresivo de pantalla (Luz gradual de 0.05 a 1.0 en 18 segundos)
         startGradualBrightnessIncrease()
-
-        // 5. Si no hay ninguna respuesta en el mismo tiempo que dura una
-        // pospuesta, se deja de sonar solo y la toma se marca como no
-        // tomada, en vez de quedar sonando indefinidamente.
-        autoMissJob = lifecycleScope.launch {
-            delay(DoseLogEntity.MISSED_GRACE_PERIOD_MINUTES * 60 * 1000L)
-            handleMissed()
-        }
 
         // 6. Interfaz de pantalla completa
         setContent {
@@ -129,31 +111,12 @@ class AlarmActivity : ComponentActivity() {
         animator.start()
     }
 
-    private fun startGentleVibration() {
-        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            vibratorManager.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-
-        val pattern = longArrayOf(0, 600, 1200, 600, 1200)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator?.vibrate(pattern, 0)
-        }
-    }
-
+    /** Callar la alarma es ahora pedirle al servicio que se detenga. */
     private fun stopSensors() {
-        audioVoiceManager.stopPlayback()
-        vibrator?.cancel()
+        AlarmSoundService.stop(this)
     }
 
     private fun handleTaken() {
-        autoMissJob?.cancel()
         stopSensors()
         val app = application as RecordaMedApp
         lifecycleScope.launch {
@@ -163,7 +126,6 @@ class AlarmActivity : ComponentActivity() {
     }
 
     private fun handleSnooze() {
-        autoMissJob?.cancel()
         stopSensors()
         val app = application as RecordaMedApp
         lifecycleScope.launch {

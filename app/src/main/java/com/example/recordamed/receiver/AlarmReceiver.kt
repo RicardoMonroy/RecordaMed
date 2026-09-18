@@ -4,10 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.PowerManager
-import androidx.core.app.NotificationManagerCompat
 import com.example.recordamed.RecordaMedApp
-import com.example.recordamed.service.NotificationHelper
-import com.example.recordamed.ui.screens.alarm.AlarmActivity
+import com.example.recordamed.service.AlarmSoundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,39 +36,29 @@ class AlarmReceiver : BroadcastReceiver() {
         )
         wakeLock.acquire(30 * 1000L) // 30 segundos
 
-        // 1. Mostrar la notificación con FullScreenIntent
-        val notification = NotificationHelper.buildAlarmNotification(
+        // Delegar en el servicio en primer plano: él publica la notificación con
+        // full-screen intent, reproduce el sonido con USAGE_ALARM, vibra y arma el
+        // temporizador de gracia.
+        //
+        // Antes esto se hacía en dos pasos desde aquí: publicar la notificación y
+        // abrir AlarmActivity con context.startActivity(). Ese segundo paso lleva
+        // bloqueado desde API 34 —verificado en un Pixel 10 con Android 17, que lo
+        // rechaza con "Background activity launch blocked ... notPendingIntent"— y
+        // además dejaba todo el aviso colgando de que la actividad arrancara. El
+        // arranque de la pantalla queda ahora en manos del full-screen intent, que sí
+        // es un PendingIntent y por tanto sí está exento de esa restricción.
+        AlarmSoundService.start(
             context = context,
             medicationId = medicationId,
             medicationName = medicationName,
             dosage = dosage,
             scheduledTime = scheduledTime,
-            isSnoozeRetry = isSnoozeRetry
-        ).build()
+            voicePath = voicePath,
+            soundType = soundType,
+            isSnoozeRetry = isSnoozeRetry,
+        )
 
-        val notificationManager = NotificationManagerCompat.from(context)
-        try {
-            notificationManager.notify((medicationId xor scheduledTime).toInt(), notification)
-        } catch (e: SecurityException) {
-            // Manejar si el permiso de notificaciones no fue otorgado aún
-        }
-
-        // 2. Abrir la pantalla completa del despertador (AlarmActivity)
-        val activityIntent = Intent(context, AlarmActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            putExtra(AlarmActivity.EXTRA_MEDICATION_ID, medicationId)
-            putExtra(AlarmActivity.EXTRA_MEDICATION_NAME, medicationName)
-            putExtra(AlarmActivity.EXTRA_DOSAGE, dosage)
-            putExtra(AlarmActivity.EXTRA_SCHEDULED_TIME, scheduledTime)
-            putExtra(AlarmActivity.EXTRA_VOICE_PATH, voicePath)
-            putExtra(AlarmActivity.EXTRA_SOUND_TYPE, soundType)
-            putExtra(AlarmActivity.EXTRA_IS_SNOOZE_RETRY, isSnoozeRetry)
-        }
-        context.startActivity(activityIntent)
-
-        // 3. Volver a armar el recordatorio para mañana a esta misma hora.
+        // Volver a armar el recordatorio para mañana a esta misma hora.
         // AlarmManager solo permite alarmas EXACTAS de un solo disparo: si no se
         // reprograma aquí, el medicamento deja de recordarse a partir del día
         // siguiente (solo BootReceiver reprograma, y eso solo ocurre si el

@@ -12,6 +12,10 @@
          muda bajo No Molestar o "Hora de dormir". -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- El sonido de la alarma corre en un servicio en primer plano para no
+         depender de que AlarmActivity llegue a abrirse. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -49,6 +53,12 @@
             android:turnScreenOn="true"
             android:launchMode="singleTask"
             android:theme="@style/Theme.RecordaMed" />
+
+        <!-- Servicio que reproduce la alarma, independiente de la actividad -->
+        <service
+            android:name=".service.AlarmSoundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- Broadcast Receivers for Alarms & Boot -->
         <receiver
