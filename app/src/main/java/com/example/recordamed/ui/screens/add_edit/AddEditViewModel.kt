@@ -262,7 +262,11 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
                 endDate = endDate,
                 voiceNotePath = state.voiceNotePath,
                 soundType = state.soundType,
-                isActive = true
+                isActive = true,
+                // El intervalo se persiste desde esta versión. Antes se deducía restando
+                // horarios consecutivos, cálculo repetido en tres sitios y que con un
+                // solo horario no podía distinguir 24 h de cualquier otro valor.
+                intervalMinutes = totalIntervalMinutes
             )
 
             // Generar los horarios del día a partir de startHour y startMinute

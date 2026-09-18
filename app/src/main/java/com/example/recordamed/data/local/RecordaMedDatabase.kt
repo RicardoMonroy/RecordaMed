@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.recordamed.data.local.dao.DoseLogDao
 import com.example.recordamed.data.local.dao.DoseScheduleDao
 import com.example.recordamed.data.local.dao.MedicationDao
@@ -18,7 +19,7 @@ import com.example.recordamed.data.local.entities.MedicationEntity
         DoseScheduleEntity::class,
         DoseLogEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 abstract class RecordaMedDatabase : RoomDatabase() {
@@ -32,13 +33,33 @@ abstract class RecordaMedDatabase : RoomDatabase() {
         private var INSTANCE: RecordaMedDatabase? = null
 
         /**
+         * Añade el esquema de toma y el intervalo al medicamento.
+         *
+         * Ambas columnas llevan valor por defecto, así que las filas existentes quedan
+         * en STRICT —el único comportamiento que la app tenía— y con intervalo
+         * desconocido. Nadie ve cambiar su tratamiento por actualizar, que es
+         * justamente el punto: el historial de tomas y los horarios se conservan
+         * intactos.
+         */
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE medications ADD COLUMN scheduleMode TEXT NOT NULL DEFAULT 'STRICT'"
+                )
+                db.execSQL(
+                    "ALTER TABLE medications ADD COLUMN intervalMinutes INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        /**
          * Migraciones explícitas entre versiones del esquema.
          *
          * La versión 3 es la primera cuyo esquema queda exportado a
          * `app/schemas/` y versionado en git. De aquí en adelante, todo cambio
          * de estructura sube la versión y agrega su migración a esta lista.
          */
-        private val MIGRATIONS: Array<Migration> = arrayOf()
+        private val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_3_4)
 
         fun getDatabase(context: Context): RecordaMedDatabase {
             return INSTANCE ?: synchronized(this) {
