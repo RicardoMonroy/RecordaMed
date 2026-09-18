@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Necesario para que setBypassDnd() del canal de alarmas surta efecto: sin
+         este permiso concedido, Android lo ignora en silencio y la alarma queda
+         muda bajo No Molestar o "Hora de dormir". -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />

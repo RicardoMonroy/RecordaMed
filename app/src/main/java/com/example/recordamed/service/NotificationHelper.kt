@@ -13,12 +13,34 @@ import com.example.recordamed.ui.screens.alarm.AlarmActivity
 
 object NotificationHelper {
 
-    const val CHANNEL_ID_ALARM = "recordamed_alarm_channel"
+    // Las propiedades de un NotificationChannel (importancia, sonido, bypassDnd)
+    // quedan congeladas al crearlo: la app no puede modificarlas después, solo el
+    // usuario desde los ajustes del sistema. El canal original se creó cuando
+    // ACCESS_NOTIFICATION_POLICY aún no se declaraba, así que su setBypassDnd()
+    // quedó inerte de forma permanente. La única salida es publicar en un canal
+    // nuevo y borrar el viejo.
+    const val CHANNEL_ID_ALARM = "recordamed_alarm_channel_v2"
+    private const val CHANNEL_ID_ALARM_LEGACY = "recordamed_alarm_channel"
     private const val CHANNEL_NAME_ALARM = "Alarmas de Medicamentos"
     private const val CHANNEL_DESC_ALARM = "Notificaciones prioritarias para la toma de medicamentos"
 
+    /**
+     * ¿Puede la app saltarse No Molestar?
+     *
+     * `setBypassDnd(true)` solo surte efecto si el usuario concedió el acceso a la
+     * política de notificaciones. Sin él Android no falla ni avisa: simplemente
+     * ignora la bandera, y la alarma se queda muda de noche.
+     */
+    fun hasDndAccess(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val nm = context.getSystemService(NotificationManager::class.java)
+        return nm?.isNotificationPolicyAccessGranted == true
+    }
+
     fun createAlarmNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.getSystemService(NotificationManager::class.java)
+                ?.deleteNotificationChannel(CHANNEL_ID_ALARM_LEGACY)
             // El sonido y la vibración de la alarma los controla por completo
             // AudioVoiceManager/AlarmActivity (para poder usar la voz grabada, el
             // sonido elegido y una vibración suave). Si el canal de notificación

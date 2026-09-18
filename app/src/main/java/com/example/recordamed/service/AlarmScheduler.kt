@@ -8,11 +8,38 @@ import android.os.Build
 import android.util.Log
 import com.example.recordamed.data.local.entities.DoseLogEntity
 import com.example.recordamed.receiver.AlarmReceiver
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.Calendar
 
 class AlarmScheduler(private val context: Context) {
 
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+    private val _exactAlarmsBlocked = MutableStateFlow(false)
+
+    /**
+     * Quedó alguna alarma sin programar porque el sistema negó el permiso de alarmas
+     * exactas.
+     *
+     * Antes este caso solo se escribía en el log: la app seguía mostrando la próxima
+     * toma con normalidad mientras ninguna alarma estaba realmente armada, y el usuario
+     * se enteraba al no sonar. Exponerlo permite avisarlo en pantalla.
+     */
+    val exactAlarmsBlocked: StateFlow<Boolean> = _exactAlarmsBlocked.asStateFlow()
+
+    /**
+     * Desde Android 12 (API 31) las alarmas exactas requieren permiso. La app declara
+     * `USE_EXACT_ALARM`, que el sistema concede en la instalación a las apps de alarma,
+     * pero conviene comprobarlo en vez de darlo por hecho.
+     */
+    fun canScheduleExactAlarms(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            alarmManager.canScheduleExactAlarms()
+        } else {
+            true
+        }
 
     fun scheduleDoseAlarm(
         medicationId: Long,
@@ -94,8 +121,10 @@ class AlarmScheduler(private val context: Context) {
                 )
             }
             Log.d("AlarmScheduler", "Alarma programada para $medicationName a las $triggerTime")
+            _exactAlarmsBlocked.value = false
         } catch (e: SecurityException) {
             Log.e("AlarmScheduler", "Permiso para alarmas exactas denegado: ${e.message}", e)
+            _exactAlarmsBlocked.value = true
         }
     }
 

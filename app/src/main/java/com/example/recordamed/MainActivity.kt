@@ -16,6 +16,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.example.recordamed.service.NotificationHelper
 import com.example.recordamed.ui.navigation.RecordaMedNavGraph
 import com.example.recordamed.ui.theme.RecordaMedTheme
 
@@ -87,6 +88,27 @@ class MainActivity : ComponentActivity() {
                     // Si el fabricante no soporta esta pantalla, no bloquear la app
                 }
             }
+        }
+        checkDndAccess()
+    }
+
+    /**
+     * El canal de alarmas pide `setBypassDnd(true)`, pero Android solo lo respeta si
+     * el usuario concedió el acceso a la política de notificaciones. Sin él no hay
+     * error ni aviso: la bandera se ignora y la alarma se queda muda bajo No Molestar
+     * o "Hora de dormir" — justo de noche, que es cuando un medicamento de horario
+     * estricto más necesita sonar.
+     *
+     * Es un ajuste especial: no se puede conceder desde un diálogo, hay que abrir la
+     * pantalla del sistema. Si el usuario no lo concede la app sigue funcionando; solo
+     * pierde la capacidad de atravesar No Molestar.
+     */
+    private fun checkDndAccess() {
+        if (NotificationHelper.hasDndAccess(this)) return
+        try {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        } catch (e: Exception) {
+            // Algunos fabricantes no exponen esta pantalla; no bloquear la app
         }
     }
 }
