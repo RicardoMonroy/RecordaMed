@@ -117,7 +117,16 @@ class HomeViewModel : ViewModel() {
                     progressFraction = progressFraction,
                     isDueNow = isDueNow,
                     isAllTakenToday = false,
-                    canRegisterNow = diffMinutes <= EARLY_REGISTER_WINDOW_MINUTES
+                    canRegisterNow = diffMinutes <= EARLY_REGISTER_WINDOW_MINUTES,
+                    // La app corre horas por su cuenta —para no despertar a nadie de
+                    // madrugada— y un cambio sin explicación se parece a un error.
+                    scheduleNote = when {
+                        pendingDose.resumedAfterMissed ->
+                            "Se pasó a esta hora porque la toma anterior no se registró"
+                        pendingDose.wasDeferred ->
+                            "Se pasó a esta hora para no despertarte de madrugada"
+                        else -> null
+                    }
                 )
             } else if (doses.isNotEmpty() && doses.all { it.status == DoseLogEntity.STATUS_TAKEN }) {
                 // Todas las dosis de hoy se tomaron de verdad — sí amerita el mensaje de logro.

@@ -278,9 +278,19 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
                 intervalMinutes = totalIntervalMinutes
             )
 
-            // Generar los horarios del día a partir de startHour y startMinute
+            // Generar los horarios del día a partir de startHour y startMinute.
+            //
+            // El esquema permisivo guarda solo la primera: le sirve de ancla para la toma
+            // inicial, y a partir de ahí cada hora se calcula desde la toma real. Las
+            // demás serían filas inertes — y de hecho lo fueron: mientras se guardaban,
+            // la pantalla las leía como si fueran tomas de verdad y anunciaba una hora
+            // distinta de la que tenía armada la alarma.
             val schedules = mutableListOf<Pair<Int, Int>>()
-            val maxDosesPerDay = (1440 / totalIntervalMinutes).coerceIn(1, 48)
+            val maxDosesPerDay = if (state.scheduleMode == ScheduleMode.FLEXIBLE) {
+                1
+            } else {
+                (1440 / totalIntervalMinutes).coerceIn(1, 48)
+            }
 
             var currentTotalMinutes = (state.startHour * 60) + state.startMinute
             for (i in 0 until maxDosesPerDay) {

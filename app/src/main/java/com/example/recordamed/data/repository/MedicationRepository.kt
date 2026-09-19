@@ -7,7 +7,10 @@ import com.example.recordamed.data.local.entities.DoseLogEntity
 import com.example.recordamed.data.local.entities.DoseScheduleEntity
 import com.example.recordamed.data.local.entities.MedicationEntity
 import com.example.recordamed.domain.model.DayAdherence
+import com.example.recordamed.data.preferences.UserPreferences
 import com.example.recordamed.domain.schedule.DoseOccurrenceCalculator
+import com.example.recordamed.domain.schedule.NextDoseResolver
+import com.example.recordamed.domain.schedule.ScheduleMode
 import com.example.recordamed.domain.model.TodayDoseItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -40,7 +43,9 @@ private fun resolveCurrentOccurrence(
 class MedicationRepository(
     private val medicationDao: MedicationDao,
     private val scheduleDao: DoseScheduleDao,
-    private val doseLogDao: DoseLogDao
+    private val doseLogDao: DoseLogDao,
+    /** El esquema permisivo necesita saber cuándo duerme la persona. */
+    private val userPreferences: UserPreferences
 ) {
 
     fun getActiveMedications(): Flow<List<MedicationEntity>> = medicationDao.getActiveMedications()
@@ -107,8 +112,9 @@ class MedicationRepository(
         return combine(
             medicationDao.getActiveMedications(),
             scheduleDao.getAllSchedules(),
-            doseLogDao.getAllLogs()
-        ) { medications, allSchedules, logs ->
+            doseLogDao.getAllLogs(),
+            userPreferences.sleepWindow
+        ) { medications, allSchedules, logs, sleepWindow ->
             val now = System.currentTimeMillis()
             val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
             val medMap = medications.associateBy { it.id }
@@ -117,8 +123,13 @@ class MedicationRepository(
 
             val items = mutableListOf<TodayDoseItem>()
 
+            // El esquema permisivo no tiene cuadrícula que recorrer: su única toma se
+            // calcula aparte, más abajo, con el mismo motor que arma la alarma. Recorrer
+            // sus filas de dose_schedules —que existen pero están inertes— es justo lo
+            // que hacía que la tarjeta anunciara una hora y el teléfono sonara a otra.
             for (schedule in allSchedules) {
                 val med = medMap[schedule.medicationId] ?: continue
+                if (ScheduleMode.fromStorage(med.scheduleMode) != ScheduleMode.STRICT) continue
 
                 // Si es tratamiento temporal, verificar rango de fechas
                 if (med.isTemporary) {
@@ -161,6 +172,50 @@ class MedicationRepository(
                         formattedTime = timeFormat.format(doseCal.time),
                         status = status,
                         voiceNotePath = med.voiceNotePath
+                    )
+                )
+            }
+
+            // Medicamentos permisivos: una sola toma, la siguiente, calculada con
+            // NextDoseResolver — el mismo punto del que sale la alarma.
+            for (med in medications) {
+                if (ScheduleMode.fromStorage(med.scheduleMode) != ScheduleMode.FLEXIBLE) continue
+                if (med.isTemporary && (now < med.startDate || (med.endDate != null && now > med.endDate))) {
+                    continue
+                }
+
+                val anchor = schedulesByMed[med.id]
+                    ?.minByOrNull { it.sequenceIndex } ?: continue
+
+                val ultimaToma = logs
+                    .filter { it.medicationId == med.id && it.status == DoseLogEntity.STATUS_TAKEN }
+                    .mapNotNull { it.takenTime }
+                    .maxOrNull()
+
+                val resultado = NextDoseResolver.flexibleNextDose(
+                    medicationStartDate = med.startDate,
+                    anchorMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute),
+                    intervalMinutes = med.intervalMinutes,
+                    lastTakenAt = ultimaToma,
+                    sleepWindow = sleepWindow,
+                    now = now,
+                ) ?: continue
+
+                val estado = logMap["${med.id}_${resultado.at}"]?.status ?: DoseLogEntity.STATUS_PENDING
+                items.add(
+                    TodayDoseItem(
+                        medicationId = med.id,
+                        medicationName = med.name,
+                        dosage = med.dosage,
+                        instructions = med.instructions,
+                        colorHex = med.colorHex,
+                        iconType = med.iconType,
+                        scheduledTime = resultado.at,
+                        formattedTime = timeFormat.format(java.util.Date(resultado.at)),
+                        status = estado,
+                        voiceNotePath = med.voiceNotePath,
+                        wasDeferred = resultado.wasDeferred,
+                        resumedAfterMissed = resultado.resumedAfterMissed,
                     )
                 )
             }

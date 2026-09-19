@@ -17,4 +17,11 @@ data class MedicationCardItem(
     // habilita para registrar la toma. Si falta más tiempo, el botón queda
     // dormido para evitar registros adelantados por error.
     val canRegisterNow: Boolean
+,
+    /**
+     * Por qué la próxima toma no está donde el intervalo la pondría, cuando ese sea el
+     * caso. La app corre horas por su cuenta —para no despertar a nadie de madrugada— y
+     * un cambio de hora sin explicación se parece demasiado a un error.
+     */
+    val scheduleNote: String? = null
 )

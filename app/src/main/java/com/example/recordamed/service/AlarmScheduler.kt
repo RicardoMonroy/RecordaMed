@@ -11,7 +11,7 @@ import com.example.recordamed.data.local.entities.MedicationEntity
 import com.example.recordamed.data.preferences.UserPreferences
 import com.example.recordamed.data.repository.MedicationRepository
 import com.example.recordamed.domain.schedule.DoseOccurrenceCalculator
-import com.example.recordamed.domain.schedule.FlexibleDoseCalculator
+import com.example.recordamed.domain.schedule.NextDoseResolver
 import com.example.recordamed.domain.schedule.ScheduleMode
 import com.example.recordamed.receiver.AlarmReceiver
 import kotlinx.coroutines.flow.first
@@ -121,54 +121,33 @@ class AlarmScheduler(private val context: Context) {
         medication: MedicationEntity,
         now: Long,
     ) {
-        val intervalo = medication.intervalMinutes
-        if (intervalo <= 0) {
+        val sleepWindow = userPreferences.sleepWindow.first()
+        val anchor = repository.getSchedulesForMedicationInSequenceOrder(medication.id).firstOrNull()
+            ?: return
+        val ultimaToma = repository.getLastTakenLog(medication.id)?.takenTime
+
+        // El instante sale de NextDoseResolver, el mismo que usa el repositorio para
+        // pintar la tarjeta. Cuando cada uno lo calculaba por su cuenta, la pantalla
+        // llegó a anunciar una hora y el teléfono a sonar catorce horas después.
+        val resultado = NextDoseResolver.flexibleNextDose(
+            medicationStartDate = medication.startDate,
+            anchorMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute),
+            intervalMinutes = medication.intervalMinutes,
+            lastTakenAt = ultimaToma,
+            sleepWindow = sleepWindow,
+            now = now,
+        )
+        if (resultado == null) {
             Log.w("AlarmScheduler", "Medicamento ${medication.id} es permisivo sin intervalo; no se arma nada")
             return
         }
-
-        val sleepWindow = userPreferences.sleepWindow.first()
-        val ultimaToma = repository.getLastTakenLog(medication.id)?.takenTime
-
-        val triggerTime = if (ultimaToma != null) {
-            FlexibleDoseCalculator.nextDoseAfterTaking(ultimaToma, intervalo, sleepWindow)
-        } else {
-            // Todavía no hay ninguna toma: se ancla a la primera hora elegida, corrida
-            // si cayera dentro de las horas de sueño.
-            val primera = repository.getSchedulesForMedicationInSequenceOrder(medication.id).firstOrNull()
-                ?: return
-            var candidato = DoseOccurrenceCalculator.nextOccurrenceAfter(
-                slotMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(primera.timeHour, primera.timeMinute),
-                anchorMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(primera.timeHour, primera.timeMinute),
-                medicationStartDate = medication.startDate,
-                now = now,
+        if (resultado.resumedAfterMissed) {
+            Log.d(
+                "AlarmScheduler",
+                "Medicamento ${medication.id}: toma permisiva sin registrar; se retoma al despertar"
             )
-            candidato = FlexibleDoseCalculator.deferIfAsleep(candidato, sleepWindow)
-            candidato
         }
-
-        // Si la hora calculada ya pasó, la toma anterior no se registró y la cadena se
-        // rompió: no hay hora real de la que colgar la siguiente. Se retoma a la hora de
-        // despertar siguiente, que es el ancla natural de este esquema.
-        //
-        // Esto también evita un bucle. AlarmReceiver reprograma cada vez que suena una
-        // alarma; sin toma registrada el cálculo devolvería el mismo instante ya pasado,
-        // y armar eso dispararía de inmediato una y otra vez.
-        //
-        // Cuando esto ocurre justo al sonar la alarma, se arma la reanudación de mañana
-        // antes de que la persona alcance a responder. No es un problema: si responde, el
-        // re-cálculo posterior la reemplaza por la que toca de verdad.
-        val horaFinal = if (triggerTime <= now) {
-            FlexibleDoseCalculator.resumeAfterMissed(now, sleepWindow).also {
-                Log.d(
-                    "AlarmScheduler",
-                    "Medicamento ${medication.id}: toma permisiva sin registrar; " +
-                        "se retoma al despertar"
-                )
-            }
-        } else {
-            triggerTime
-        }
+        val horaFinal = resultado.at
 
         // Solo puede haber una alarma permisiva viva por medicamento, y su hora se
         // recalcula tras cada toma. Por eso se cancela la anterior antes de armar la

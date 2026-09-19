@@ -295,6 +295,19 @@ fun MedicationVisualCountdownCard(
                     }
                 }
 
+                // Cuando la app mueve una hora por su cuenta —para no despertar a nadie
+                // de madrugada, o al retomar tras una toma sin registrar— lo dice. Una
+                // hora que cambia sin motivo aparente se parece demasiado a un error, y
+                // quien usa esto necesita poder confiar en lo que lee.
+                card.scheduleNote?.let { nota ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = nota,
+                        fontSize = 13.sp,
+                        color = LocalContentColor.current.copy(alpha = 0.7f)
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // Barra de progreso visual que muestra cuánto falta

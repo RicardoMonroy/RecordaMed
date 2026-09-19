@@ -2,6 +2,7 @@ package com.example.recordamed
 
 import android.app.Application
 import com.example.recordamed.data.local.RecordaMedDatabase
+import com.example.recordamed.data.preferences.UserPreferences
 import com.example.recordamed.data.repository.MedicationRepository
 import com.example.recordamed.service.AlarmScheduler
 import com.example.recordamed.service.NotificationHelper
@@ -13,7 +14,8 @@ class RecordaMedApp : Application() {
         MedicationRepository(
             medicationDao = database.medicationDao(),
             scheduleDao = database.doseScheduleDao(),
-            doseLogDao = database.doseLogDao()
+            doseLogDao = database.doseLogDao(),
+            userPreferences = UserPreferences(this)
         )
     }
     val alarmScheduler by lazy { AlarmScheduler(this) }
