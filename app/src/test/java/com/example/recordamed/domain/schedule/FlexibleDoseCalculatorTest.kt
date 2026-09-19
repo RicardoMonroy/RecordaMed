@@ -195,6 +195,48 @@ class FlexibleDoseCalculatorTest {
         FlexibleDoseCalculator.nextDoseAfterTaking(at(19, 8, 0), 0, sueño, utc)
     }
 
+    // --- reanudacion tras una toma perdida --------------------------------------------
+
+    @Test
+    fun `tras una toma perdida por la tarde se retoma a la manana siguiente`() {
+        // Se perdió la toma de las 16:00. Con ventana de 22:00 a 7:00, se retoma a las
+        // 7:00 del día siguiente. La consecuencia asumida: no vuelve a sonar esa tarde.
+        val resultado = FlexibleDoseCalculator.resumeAfterMissed(at(19, 16, 0), sueño, utc)
+
+        assertEquals(describir(at(20, 7, 0)), describir(resultado))
+    }
+
+    @Test
+    fun `tras una toma perdida de madrugada se retoma el mismo dia al despertar`() {
+        // No debería ocurrir en permisivo, porque nunca se arma de madrugada, pero si un
+        // cambio de la ventana de sueño deja una toma ahí, lo correcto es retomar a las
+        // 7:00 de ese mismo día, no esperar 24 horas.
+        val resultado = FlexibleDoseCalculator.resumeAfterMissed(at(19, 3, 0), sueño, utc)
+
+        assertEquals(describir(at(19, 7, 0)), describir(resultado))
+    }
+
+    @Test
+    fun `una toma perdida justo a la hora de despertar espera al dia siguiente`() {
+        // Límite estricto: retomar en el mismo instante en que se perdió significaría
+        // armar una alarma para ahora mismo y volver a fallar de inmediato.
+        val resultado = FlexibleDoseCalculator.resumeAfterMissed(at(19, 7, 0), sueño, utc)
+
+        assertEquals(describir(at(20, 7, 0)), describir(resultado))
+    }
+
+    @Test
+    fun `la reanudacion siempre es estrictamente futura`() {
+        listOf(at(19, 0, 0), at(19, 7, 0), at(19, 12, 0), at(19, 22, 0), at(19, 23, 59))
+            .forEach { perdida ->
+                val resultado = FlexibleDoseCalculator.resumeAfterMissed(perdida, sueño, utc)
+                assertTrue(
+                    "reanudar en ${describir(resultado)} no es futuro respecto a ${describir(perdida)}",
+                    resultado > perdida,
+                )
+            }
+    }
+
     @Test
     fun `minuteOfDay convierte un instante a minuto del dia`() {
         assertEquals(0, FlexibleDoseCalculator.minuteOfDay(at(19, 0, 0), utc))

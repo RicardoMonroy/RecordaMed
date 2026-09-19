@@ -147,20 +147,27 @@ class AlarmScheduler(private val context: Context) {
             candidato
         }
 
-        // Nunca armar en el pasado.
+        // Si la hora calculada ya pasó, la toma anterior no se registró y la cadena se
+        // rompió: no hay hora real de la que colgar la siguiente. Se retoma a la hora de
+        // despertar siguiente, que es el ancla natural de este esquema.
         //
-        // AlarmReceiver reprograma cada vez que suena una alarma. Si la toma no se
-        // registra, el cálculo sigue partiendo de la última toma real —la vieja— y
-        // devuelve el mismo instante, que para entonces ya pasó. Armar eso dispararía
-        // de inmediato y otra vez, en bucle. Mientras la dosis siga sin registrarse no
-        // hay siguiente hora que calcular: la habrá cuando la persona la marque.
-        if (triggerTime <= now) {
-            Log.d(
-                "AlarmScheduler",
-                "Medicamento ${medication.id}: la siguiente toma permisiva ya pasó; " +
-                    "se espera a que se registre en vez de rearmar"
-            )
-            return
+        // Esto también evita un bucle. AlarmReceiver reprograma cada vez que suena una
+        // alarma; sin toma registrada el cálculo devolvería el mismo instante ya pasado,
+        // y armar eso dispararía de inmediato una y otra vez.
+        //
+        // Cuando esto ocurre justo al sonar la alarma, se arma la reanudación de mañana
+        // antes de que la persona alcance a responder. No es un problema: si responde, el
+        // re-cálculo posterior la reemplaza por la que toca de verdad.
+        val horaFinal = if (triggerTime <= now) {
+            FlexibleDoseCalculator.resumeAfterMissed(now, sleepWindow).also {
+                Log.d(
+                    "AlarmScheduler",
+                    "Medicamento ${medication.id}: toma permisiva sin registrar; " +
+                        "se retoma al despertar"
+                )
+            }
+        } else {
+            triggerTime
         }
 
         // Solo puede haber una alarma permisiva viva por medicamento, y su hora se
@@ -171,7 +178,7 @@ class AlarmScheduler(private val context: Context) {
             medicationId = medication.id,
             medicationName = medication.name,
             dosage = medication.dosage,
-            triggerTime = triggerTime,
+            triggerTime = horaFinal,
             voiceNotePath = medication.voiceNotePath,
             soundType = medication.soundType,
             requestCode = flexibleRequestCode(medication.id),

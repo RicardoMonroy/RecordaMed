@@ -76,23 +76,58 @@ object FlexibleDoseCalculator {
         return deferIfAsleep(candidato, sleepWindow, timeZone) != candidato
     }
 
+    /**
+     * Cuándo se retoma el tratamiento después de una toma que no se realizó.
+     *
+     * La cadena del esquema permisivo se sostiene sobre la toma anterior, así que una
+     * toma perdida la rompe: no hay hora real de la que colgar la siguiente. Se retoma a
+     * la **hora de despertar siguiente**, que es el ancla natural de este esquema — el
+     * día empieza con la primera toma de la mañana.
+     *
+     * Las alternativas se descartaron: seguir contando como si la toma se hubiera hecho
+     * asume una dosis que no ocurrió, y reintentar al rato el mismo día insiste hasta
+     * volverse molesto, que es justo lo que esta app quiere evitar.
+     *
+     * La consecuencia hay que asumirla con los ojos abiertos: si alguien se salta la
+     * última toma de la tarde, no vuelve a sonar hasta la mañana siguiente.
+     */
+    fun resumeAfterMissed(
+        missedAt: Long,
+        sleepWindow: SleepWindow,
+        timeZone: TimeZone = TimeZone.getDefault(),
+    ): Long = nextWakeTimeStrictlyAfter(missedAt, sleepWindow, timeZone)
+
     /** Minuto del día (0..1439) de un instante. */
     fun minuteOfDay(timestamp: Long, timeZone: TimeZone = TimeZone.getDefault()): Int {
         val cal = Calendar.getInstance(timeZone).apply { timeInMillis = timestamp }
         return cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
     }
 
-    /**
-     * Primera hora de despertar que ocurre en [from] o después.
-     *
-     * Se busca hacia delante en vez de calcular la diferencia de minutos porque la ventana
-     * puede cruzar la medianoche: alguien que duerme de 22:00 a 7:00 y tiene una toma a las
-     * 23:00 debe despertar a las 7:00 del día **siguiente**, no del mismo.
-     */
+    /** Primera hora de despertar que ocurre en [from] o después. */
     private fun nextWakeTimeAtOrAfter(
         from: Long,
         sleepWindow: SleepWindow,
         timeZone: TimeZone,
+    ): Long = wakeTime(from, sleepWindow, timeZone, estricto = false)
+
+    private fun nextWakeTimeStrictlyAfter(
+        from: Long,
+        sleepWindow: SleepWindow,
+        timeZone: TimeZone,
+    ): Long = wakeTime(from, sleepWindow, timeZone, estricto = true)
+
+    /**
+     * Hora de despertar más próxima a partir de [from].
+     *
+     * Se busca hacia delante en vez de calcular la diferencia de minutos porque la
+     * ventana puede cruzar la medianoche: alguien que duerme de 22:00 a 7:00 y tiene una
+     * toma a las 23:00 debe despertar a las 7:00 del día **siguiente**, no del mismo.
+     */
+    private fun wakeTime(
+        from: Long,
+        sleepWindow: SleepWindow,
+        timeZone: TimeZone,
+        estricto: Boolean,
     ): Long {
         val cal = Calendar.getInstance(timeZone).apply {
             timeInMillis = from
@@ -101,9 +136,8 @@ object FlexibleDoseCalculator {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
-        if (cal.timeInMillis < from) {
-            cal.add(Calendar.DAY_OF_YEAR, 1)
-        }
+        val yaPaso = if (estricto) cal.timeInMillis <= from else cal.timeInMillis < from
+        if (yaPaso) cal.add(Calendar.DAY_OF_YEAR, 1)
         return cal.timeInMillis
     }
 }
