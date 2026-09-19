@@ -11,12 +11,14 @@ import com.example.recordamed.ui.screens.add_edit.AddEditMedicationScreen
 import com.example.recordamed.ui.screens.detail.MedicationDetailScreen
 import com.example.recordamed.ui.screens.history.HistoryScreen
 import com.example.recordamed.ui.screens.home.HomeScreen
+import com.example.recordamed.ui.screens.settings.SettingsScreen
 
 object Destinations {
     const val HOME = "home"
     const val ADD_EDIT = "add_edit?medicationId={medicationId}"
     const val DETAIL = "detail/{medicationId}"
     const val HISTORY = "history"
+    const val SETTINGS = "settings"
 
     fun addEditRoute(medicationId: Long = 0L) = "add_edit?medicationId=$medicationId"
     fun detailRoute(medicationId: Long) = "detail/$medicationId"
@@ -40,6 +42,9 @@ fun RecordaMedNavGraph(
                 },
                 onNavigateToHistory = {
                     navController.navigate(Destinations.HISTORY)
+                },
+                onNavigateToSettings = {
+                    navController.navigate(Destinations.SETTINGS)
                 }
             )
         }
@@ -87,6 +92,12 @@ fun RecordaMedNavGraph(
                 onNavigateBack = {
                     navController.popBackStack()
                 }
+            )
+        }
+
+        composable(Destinations.SETTINGS) {
+            SettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

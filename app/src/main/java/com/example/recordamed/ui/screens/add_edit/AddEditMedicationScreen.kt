@@ -27,6 +27,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.recordamed.domain.schedule.ScheduleMode
 import com.example.recordamed.service.BuiltInSoundManager
 import com.example.recordamed.ui.theme.RecordaMedExtras
 
@@ -200,7 +201,60 @@ fun AddEditMedicationScreen(
 
             HorizontalDivider()
 
-            // 4. Duración del tratamiento
+            // 4. Esquema de toma. Va antes que el resto porque cambia el significado de
+            // lo que viene después: en horario fijo la hora manda, y en el otro lo que
+            // manda es el tiempo entre tomas.
+            Text(
+                text = "¿Cómo debe tomarse?",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                TreatmentTypeOption(
+                    title = "A horas fijas",
+                    subtitle = "Suena a la hora exacta, aunque sea de noche",
+                    isSelected = uiState.scheduleMode == ScheduleMode.STRICT,
+                    onClick = { viewModel.updateScheduleMode(ScheduleMode.STRICT) },
+                    modifier = Modifier.weight(1f)
+                )
+
+                TreatmentTypeOption(
+                    title = "Cada cierto tiempo",
+                    subtitle = "Cuenta desde que la tomas y respeta tu sueño",
+                    isSelected = uiState.scheduleMode == ScheduleMode.FLEXIBLE,
+                    onClick = { viewModel.updateScheduleMode(ScheduleMode.FLEXIBLE) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // Cada esquema tiene una consecuencia que conviene decir en voz alta, para
+            // que la elección sea informada y no una casilla más del formulario.
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Text(
+                    text = if (uiState.scheduleMode == ScheduleMode.STRICT) {
+                        "Para medicamentos que el médico indicó a una hora exacta. " +
+                            "Te va a despertar si toca de madrugada."
+                    } else {
+                        "Para cuando lo importante es el tiempo entre tomas. " +
+                            "Si una toca mientras duermes, se pasa a cuando despiertes."
+                    },
+                    fontSize = 15.sp,
+                    modifier = Modifier.padding(14.dp)
+                )
+            }
+
+            HorizontalDivider()
+
+            // 5. Duración del tratamiento
             Text(
                 text = "Duración del tratamiento",
                 fontSize = 17.sp,

@@ -31,6 +31,7 @@ fun HomeScreen(
     onNavigateToAddMedication: () -> Unit,
     onNavigateToDetail: (Long) -> Unit,
     onNavigateToHistory: () -> Unit,
+    onNavigateToSettings: () -> Unit,
     viewModel: HomeViewModel = viewModel()
 ) {
     val medicationCards by viewModel.medicationCards.collectAsState()
@@ -46,13 +47,12 @@ fun HomeScreen(
                     )
                 },
                 actions = {
-                    val context = androidx.compose.ui.platform.LocalContext.current
-                    val isDark by com.example.recordamed.ui.theme.ThemeManager.isDarkMode.collectAsState()
-
-                    IconButton(onClick = { com.example.recordamed.ui.theme.ThemeManager.toggleTheme(context) }) {
+                    // El cambio de tema vive ahora dentro de Ajustes, junto al resto de
+                    // preferencias, en vez de ocupar un sitio permanente en la barra.
+                    IconButton(onClick = onNavigateToSettings) {
                         Icon(
-                            imageVector = if (isDark) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Cambiar modo claro/oscuro",
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Ajustes",
                             modifier = Modifier.size(26.dp)
                         )
                     }

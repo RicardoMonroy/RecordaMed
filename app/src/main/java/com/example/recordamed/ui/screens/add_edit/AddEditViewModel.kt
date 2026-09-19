@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.recordamed.RecordaMedApp
 import com.example.recordamed.data.local.entities.MedicationEntity
+import com.example.recordamed.domain.schedule.ScheduleMode
 import com.example.recordamed.service.AudioVoiceManager
 import com.example.recordamed.service.BuiltInSoundManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,8 @@ data class AddEditUiState(
     val dosage: String = "",
     val instructions: String = "",
     val isTemporary: Boolean = false,
+    /** Esquema de toma. Por defecto estricto: es el comportamiento histórico. */
+    val scheduleMode: ScheduleMode = ScheduleMode.DEFAULT,
     val durationDays: Int = 7,
     val intervalHours: Int = 8,
     val intervalMinutes: Int = 0,
@@ -67,6 +70,10 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
         return timeFormat.format(cal.time)
     }
 
+    fun updateScheduleMode(mode: ScheduleMode) {
+        _uiState.update { it.copy(scheduleMode = mode) }
+    }
+
     fun loadMedication(id: Long) {
         if (id <= 0) return
         viewModelScope.launch {
@@ -104,6 +111,7 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
                     dosage = med.dosage,
                     instructions = med.instructions,
                     isTemporary = med.isTemporary,
+                    scheduleMode = ScheduleMode.fromStorage(med.scheduleMode),
                     soundType = med.soundType,
                     voiceNotePath = med.voiceNotePath,
                     intervalHours = intervalHours,
@@ -263,6 +271,7 @@ class AddEditViewModel(application: Application) : AndroidViewModel(application)
                 voiceNotePath = state.voiceNotePath,
                 soundType = state.soundType,
                 isActive = true,
+                scheduleMode = state.scheduleMode.name,
                 // El intervalo se persiste desde esta versión. Antes se deducía restando
                 // horarios consecutivos, cálculo repetido en tres sitios y que con un
                 // solo horario no podía distinguir 24 h de cualquier otro valor.
