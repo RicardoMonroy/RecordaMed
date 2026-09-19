@@ -204,6 +204,10 @@ class HomeViewModel : ViewModel() {
         viewModelScope.launch {
             repository.markDoseTaken(card.medicationId, scheduledTime)
             alarmScheduler.cancelAlarm(card.medicationId, scheduledTime)
+            // En el esquema permisivo la siguiente toma se cuelga de ésta, así que hay
+            // que recalcularla ahora. En el estricto la llamada es inofensiva: vuelve a
+            // armar la misma parrilla de horas fijas.
+            alarmScheduler.rescheduleForMedication(repository, card.medicationId)
         }
     }
 }

@@ -7,18 +7,28 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import com.example.recordamed.data.local.entities.DoseLogEntity
+import com.example.recordamed.data.local.entities.MedicationEntity
+import com.example.recordamed.data.preferences.UserPreferences
 import com.example.recordamed.data.repository.MedicationRepository
 import com.example.recordamed.domain.schedule.DoseOccurrenceCalculator
+import com.example.recordamed.domain.schedule.FlexibleDoseCalculator
+import com.example.recordamed.domain.schedule.ScheduleMode
 import com.example.recordamed.receiver.AlarmReceiver
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 private const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
 
+/** Separa el espacio de códigos de las alarmas permisivas del de las estrictas. */
+private const val FLEXIBLE_CODE_SALT = 0x5F1E_0000L
+
 class AlarmScheduler(private val context: Context) {
 
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+    private val userPreferences by lazy { UserPreferences(context.applicationContext) }
 
     private val _exactAlarmsBlocked = MutableStateFlow(false)
 
@@ -45,12 +55,7 @@ class AlarmScheduler(private val context: Context) {
         }
 
     /**
-     * Re-arma todas las alarmas de un medicamento a partir de sus horarios guardados.
-     *
-     * Sustituye al antiguo `scheduleDoseAlarm(hour, minute)`, que calculaba por su
-     * cuenta "hoy o mañana a esa hora" y producía timestamps que no coincidían con los
-     * del repositorio. Ahora el instante sale de [DoseOccurrenceCalculator], el mismo
-     * que usa el resto de la app, de modo que cancelar una alarma sí la encuentra.
+     * Re-arma las alarmas de un medicamento, según su esquema de toma.
      *
      * Es idempotente: los `PendingIntent` se crean con `FLAG_UPDATE_CURRENT`, así que
      * volver a llamarla reemplaza las alarmas existentes en lugar de duplicarlas.
@@ -64,7 +69,24 @@ class AlarmScheduler(private val context: Context) {
         if (!medication.isActive) return
         if (medication.isTemporary && medication.endDate != null && now >= medication.endDate) return
 
-        val schedules = repository.getSchedulesForMedicationInSequenceOrder(medicationId)
+        when (ScheduleMode.fromStorage(medication.scheduleMode)) {
+            ScheduleMode.STRICT -> rescheduleStrict(repository, medication, now)
+            ScheduleMode.FLEXIBLE -> rescheduleFlexible(repository, medication, now)
+        }
+    }
+
+    /**
+     * Esquema estricto: una alarma por cada horario guardado, en horas de reloj fijas.
+     *
+     * El instante sale de [DoseOccurrenceCalculator], el mismo que usa el repositorio,
+     * de modo que cancelar una alarma sí la encuentra.
+     */
+    private suspend fun rescheduleStrict(
+        repository: MedicationRepository,
+        medication: MedicationEntity,
+        now: Long,
+    ) {
+        val schedules = repository.getSchedulesForMedicationInSequenceOrder(medication.id)
         val anchor = schedules.firstOrNull() ?: return
         val anchorMinute = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute)
 
@@ -84,6 +106,76 @@ class AlarmScheduler(private val context: Context) {
                 soundType = medication.soundType,
             )
         }
+    }
+
+    /**
+     * Esquema permisivo: **una sola alarma viva**, la siguiente.
+     *
+     * No hay parrilla que recorrer porque la hora de la próxima toma no existe hasta que
+     * se registra la anterior: se cuelga de cuándo la persona se la tomó de verdad. Si
+     * aún no hay ninguna toma registrada, se parte de la hora de inicio elegida al dar de
+     * alta el medicamento.
+     */
+    private suspend fun rescheduleFlexible(
+        repository: MedicationRepository,
+        medication: MedicationEntity,
+        now: Long,
+    ) {
+        val intervalo = medication.intervalMinutes
+        if (intervalo <= 0) {
+            Log.w("AlarmScheduler", "Medicamento ${medication.id} es permisivo sin intervalo; no se arma nada")
+            return
+        }
+
+        val sleepWindow = userPreferences.sleepWindow.first()
+        val ultimaToma = repository.getLastTakenLog(medication.id)?.takenTime
+
+        val triggerTime = if (ultimaToma != null) {
+            FlexibleDoseCalculator.nextDoseAfterTaking(ultimaToma, intervalo, sleepWindow)
+        } else {
+            // Todavía no hay ninguna toma: se ancla a la primera hora elegida, corrida
+            // si cayera dentro de las horas de sueño.
+            val primera = repository.getSchedulesForMedicationInSequenceOrder(medication.id).firstOrNull()
+                ?: return
+            var candidato = DoseOccurrenceCalculator.nextOccurrenceAfter(
+                slotMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(primera.timeHour, primera.timeMinute),
+                anchorMinuteOfDay = DoseOccurrenceCalculator.minuteOfDay(primera.timeHour, primera.timeMinute),
+                medicationStartDate = medication.startDate,
+                now = now,
+            )
+            candidato = FlexibleDoseCalculator.deferIfAsleep(candidato, sleepWindow)
+            candidato
+        }
+
+        // Nunca armar en el pasado.
+        //
+        // AlarmReceiver reprograma cada vez que suena una alarma. Si la toma no se
+        // registra, el cálculo sigue partiendo de la última toma real —la vieja— y
+        // devuelve el mismo instante, que para entonces ya pasó. Armar eso dispararía
+        // de inmediato y otra vez, en bucle. Mientras la dosis siga sin registrarse no
+        // hay siguiente hora que calcular: la habrá cuando la persona la marque.
+        if (triggerTime <= now) {
+            Log.d(
+                "AlarmScheduler",
+                "Medicamento ${medication.id}: la siguiente toma permisiva ya pasó; " +
+                    "se espera a que se registre en vez de rearmar"
+            )
+            return
+        }
+
+        // Solo puede haber una alarma permisiva viva por medicamento, y su hora se
+        // recalcula tras cada toma. Por eso se cancela la anterior antes de armar la
+        // nueva: su código es estable por medicamento, no derivado del instante.
+        cancelFlexibleAlarm(medication.id)
+        scheduleAlarmAtTime(
+            medicationId = medication.id,
+            medicationName = medication.name,
+            dosage = medication.dosage,
+            triggerTime = triggerTime,
+            voiceNotePath = medication.voiceNotePath,
+            soundType = medication.soundType,
+            requestCode = flexibleRequestCode(medication.id),
+        )
     }
 
     /**
@@ -114,7 +206,11 @@ class AlarmScheduler(private val context: Context) {
         // representando la MISMA toma original para que el registro de
         // tomada/no tomada coincida con la tarjeta y el historial.
         originalScheduledTime: Long = triggerTime,
-        isSnoozeRetry: Boolean = false
+        isSnoozeRetry: Boolean = false,
+        // Por defecto el identificador se deriva del instante, que es lo correcto en el
+        // esquema estricto: cada hora de la parrilla es una alarma distinta. El permisivo
+        // pasa el suyo, estable por medicamento.
+        requestCode: Int = (medicationId xor triggerTime).toInt(),
     ) {
         val intent = Intent(context, AlarmReceiver::class.java).apply {
             putExtra(AlarmReceiver.EXTRA_MEDICATION_ID, medicationId)
@@ -126,7 +222,6 @@ class AlarmScheduler(private val context: Context) {
             putExtra(AlarmReceiver.EXTRA_IS_SNOOZE_RETRY, isSnoozeRetry)
         }
 
-        val requestCode = (medicationId xor triggerTime).toInt()
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             requestCode,
@@ -194,6 +289,34 @@ class AlarmScheduler(private val context: Context) {
     }
 
     /**
+     * Identificador estable de la alarma permisiva de un medicamento.
+     *
+     * En el esquema permisivo la hora se recalcula tras cada toma, así que un código
+     * derivado del instante dejaría alarmas huérfanas: al mover la hora, el código
+     * cambiaría y la anterior quedaría armada sin forma de encontrarla. Como solo puede
+     * haber una alarma viva por medicamento, basta con su id.
+     *
+     * El desplazamiento evita chocar con los códigos del esquema estricto, que salen de
+     * `medicationId xor triggerTime`.
+     */
+    private fun flexibleRequestCode(medicationId: Long): Int =
+        (medicationId xor FLEXIBLE_CODE_SALT).toInt()
+
+    /** Cancela la única alarma permisiva viva de un medicamento, si la hay. */
+    private fun cancelFlexibleAlarm(medicationId: Long) {
+        val intent = Intent(context, AlarmReceiver::class.java)
+        PendingIntent.getBroadcast(
+            context,
+            flexibleRequestCode(medicationId),
+            intent,
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        )?.let {
+            alarmManager.cancel(it)
+            it.cancel()
+        }
+    }
+
+    /**
      * Cancela todas las alarmas armadas para un medicamento.
      *
      * Reemplaza al antiguo `cancelAlarmForHourMinute`, que adivinaba el timestamp
@@ -218,6 +341,12 @@ class AlarmScheduler(private val context: Context) {
         now: Long = System.currentTimeMillis(),
     ) {
         val medication = repository.getMedicationById(medicationId) ?: return
+
+        // El esquema permisivo tiene una sola alarma viva, con código estable: no hay
+        // parrilla que recorrer. Se cancela siempre, incluso si el medicamento es
+        // estricto ahora, por si cambió de esquema y quedó una alarma del anterior.
+        cancelFlexibleAlarm(medicationId)
+
         val schedules = repository.getSchedulesForMedicationInSequenceOrder(medicationId)
         val anchor = schedules.firstOrNull() ?: return
         val anchorMinute = DoseOccurrenceCalculator.minuteOfDay(anchor.timeHour, anchor.timeMinute)

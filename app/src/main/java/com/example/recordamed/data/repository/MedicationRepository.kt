@@ -48,6 +48,10 @@ class MedicationRepository(
     suspend fun getActiveMedicationsSync(): List<MedicationEntity> =
         medicationDao.getActiveMedicationsSync()
 
+    /** Última toma real de un medicamento; el ancla del esquema permisivo. */
+    suspend fun getLastTakenLog(medicationId: Long): DoseLogEntity? =
+        doseLogDao.getLastTakenLog(medicationId)
+
     suspend fun getMedicationById(id: Long): MedicationEntity? = medicationDao.getMedicationById(id)
 
     suspend fun getSchedulesForMedication(medicationId: Long): List<DoseScheduleEntity> {

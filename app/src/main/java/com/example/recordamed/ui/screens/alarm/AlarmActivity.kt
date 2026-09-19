@@ -121,6 +121,10 @@ class AlarmActivity : ComponentActivity() {
         val app = application as RecordaMedApp
         lifecycleScope.launch {
             app.repository.markDoseTaken(medicationId, scheduledTime)
+            // Este camino no reprogramaba nada. En el esquema permisivo eso dejaba al
+            // medicamento sin siguiente alarma en cuanto la toma se registraba desde la
+            // propia pantalla de alarma, que es el caso más habitual.
+            app.alarmScheduler.rescheduleForMedication(app.repository, medicationId)
             returnToApp()
         }
     }
